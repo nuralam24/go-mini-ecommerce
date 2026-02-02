@@ -1,0 +1,5 @@
+{
+  "name": "go-ecommerce",
+  "version": "1.0.0",
+  "description": "Go E-Commerce API with sqlc and PostgreSQL"
+}
