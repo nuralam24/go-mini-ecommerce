@@ -1,28 +1,28 @@
 package middleware
 
 import (
-	"log"
 	"net/http"
 	"time"
+
+	"go-ecommerce/internal/logger"
 )
 
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		// Create a response writer wrapper to capture status code
 		lw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 		next.ServeHTTP(lw, r)
 
 		duration := time.Since(start)
-		log.Printf(
-			"%s %s %d %v",
-			r.Method,
-			r.RequestURI,
-			lw.statusCode,
-			duration,
-		)
+		logger.Log.Info().
+			Str("method", r.Method).
+			Str("path", r.RequestURI).
+			Int("status", lw.statusCode).
+			Dur("duration", duration).
+			Str("remote_addr", r.RemoteAddr).
+			Msg("Request completed")
 	})
 }
 

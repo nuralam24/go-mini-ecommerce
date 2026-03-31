@@ -2,18 +2,22 @@ package handlers
 
 import (
 	"net/http"
-	"strings"
 
-	"go-ecommerce/internal/database"
+	"go-ecommerce/internal/database/sqlc"
+	apierrors "go-ecommerce/internal/errors"
+	"go-ecommerce/internal/logger"
 	"go-ecommerce/internal/middleware"
 	"go-ecommerce/internal/models"
 	"go-ecommerce/internal/utils"
+	"go-ecommerce/internal/validator"
 )
 
-type UserHandler struct{}
+type UserHandler struct {
+	store *sqlc.Store
+}
 
-func NewUserHandler() *UserHandler {
-	return &UserHandler{}
+func NewUserHandler(store *sqlc.Store) *UserHandler {
+	return &UserHandler{store: store}
 }
 
 // RegisterUser godoc
@@ -26,38 +30,42 @@ func NewUserHandler() *UserHandler {
 // @Success 201 {object} models.UserResponse
 // @Failure 400 {object} map[string]string
 // @Failure 409 {object} map[string]string
-// @Router /api/users/register [post]
+// @Router /api/v1/users/register [post]
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateUserRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
-	if !strings.Contains(req.Email, "@") {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid email format")
+	if err := validator.Validate(req); err != nil {
+		validationErrors := validator.FormatValidationErrors(err)
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.NewWithDetails(apierrors.ErrCodeValidationFailed, "Validation failed", validationErrors))
 		return
 	}
 
-	existingUser, _ := database.Queries.GetUserByEmail(r.Context(), req.Email)
+	existingUser, _ := h.store.GetUserByEmail(r.Context(), req.Email)
 	if existingUser != nil {
-		utils.RespondWithError(w, http.StatusConflict, "User with this email already exists")
+		apierrors.RespondWithError(w, http.StatusConflict, apierrors.New(apierrors.ErrCodeConflict, "User with this email already exists"))
 		return
 	}
 
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to hash password")
+		logger.Log.Error().Err(err).Msg("Failed to hash password")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeInternalError, "Failed to hash password"))
 		return
 	}
 
-	user, err := database.Queries.CreateUser(r.Context(), req.Email, hashedPassword, req.Name, req.Phone, req.Address)
+	user, err := h.store.CreateUser(r.Context(), req.Email, hashedPassword, req.Name, req.Phone, req.Address)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to create user")
+		logger.Log.Error().Err(err).Msg("Failed to create user")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to create user"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusCreated, models.ToUserResponse(user))
+	logger.Log.Info().Str("email", req.Email).Str("user_id", user.ID).Msg("User registered successfully")
+	apierrors.RespondWithJSON(w, http.StatusCreated, models.ToUserResponse(user))
 }
 
 // LoginUser godoc
@@ -69,32 +77,40 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 // @Param credentials body models.LoginRequest true "Login credentials"
 // @Success 200 {object} models.LoginResponse
 // @Failure 401 {object} map[string]string
-// @Router /api/users/login [post]
+// @Router /api/v1/users/login [post]
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
-	user, err := database.Queries.GetUserByEmail(r.Context(), req.Email)
+	if err := validator.Validate(req); err != nil {
+		validationErrors := validator.FormatValidationErrors(err)
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.NewWithDetails(apierrors.ErrCodeValidationFailed, "Validation failed", validationErrors))
+		return
+	}
+
+	user, err := h.store.GetUserByEmail(r.Context(), req.Email)
 	if err != nil || user == nil {
-		utils.RespondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Invalid email or password"))
 		return
 	}
 
 	if !utils.CheckPasswordHash(req.Password, user.Password) {
-		utils.RespondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Invalid email or password"))
 		return
 	}
 
 	token, err := utils.GenerateToken(user.ID, user.Email, "user")
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+		logger.Log.Error().Err(err).Msg("Failed to generate token")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeInternalError, "Failed to generate token"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, models.LoginResponse{
+	logger.Log.Info().Str("email", req.Email).Str("user_id", user.ID).Msg("User logged in")
+	apierrors.RespondWithJSON(w, http.StatusOK, models.LoginResponse{
 		Token: token,
 		User:  models.ToUserResponse(user),
 	})
@@ -108,21 +124,21 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Success 200 {object} models.UserResponse
 // @Failure 401 {object} map[string]string
-// @Router /api/users/profile [get]
+// @Router /api/v1/users/profile [get]
 func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	if userID == "" {
-		utils.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Unauthorized"))
 		return
 	}
 
-	user, err := database.Queries.GetUserByID(r.Context(), userID)
+	user, err := h.store.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "User not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "User not found"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, models.ToUserResponse(user))
+	apierrors.RespondWithJSON(w, http.StatusOK, models.ToUserResponse(user))
 }
 
 // UpdateProfile godoc
@@ -136,17 +152,17 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} models.UserResponse
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
-// @Router /api/users/profile [put]
+// @Router /api/v1/users/profile [put]
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	if userID == "" {
-		utils.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Unauthorized"))
 		return
 	}
 
 	var updateData map[string]interface{}
 	if err := utils.DecodeJSON(r, &updateData); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
@@ -163,19 +179,21 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if name == nil && phone == nil && address == nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "No valid fields to update")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "No valid fields to update"))
 		return
 	}
 
-	user, err := database.Queries.UpdateUser(r.Context(), userID, name, phone, address)
+	user, err := h.store.UpdateUser(r.Context(), userID, name, phone, address)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to update profile")
+		logger.Log.Error().Err(err).Str("user_id", userID).Msg("Failed to update user profile")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to update profile"))
 		return
 	}
 	if user == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "User not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "User not found"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, models.ToUserResponse(user))
+	logger.Log.Info().Str("user_id", userID).Msg("User profile updated")
+	apierrors.RespondWithJSON(w, http.StatusOK, models.ToUserResponse(user))
 }

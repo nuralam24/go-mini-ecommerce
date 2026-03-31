@@ -3,15 +3,20 @@ package handlers
 import (
 	"net/http"
 
-	"go-ecommerce/internal/database"
+	"go-ecommerce/internal/database/sqlc"
+	apierrors "go-ecommerce/internal/errors"
+	"go-ecommerce/internal/logger"
 	"go-ecommerce/internal/models"
 	"go-ecommerce/internal/utils"
+	"go-ecommerce/internal/validator"
 )
 
-type CategoryHandler struct{}
+type CategoryHandler struct {
+	store *sqlc.Store
+}
 
-func NewCategoryHandler() *CategoryHandler {
-	return &CategoryHandler{}
+func NewCategoryHandler(store *sqlc.Store) *CategoryHandler {
+	return &CategoryHandler{store: store}
 }
 
 // CreateCategory godoc
@@ -26,27 +31,35 @@ func NewCategoryHandler() *CategoryHandler {
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Failure 409 {object} map[string]string
-// @Router /api/categories [post]
+// @Router /api/v1/categories [post]
 func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateCategoryRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
-	existing, _ := database.Queries.GetCategoryByName(r.Context(), req.Name)
+	if err := validator.Validate(req); err != nil {
+		validationErrors := validator.FormatValidationErrors(err)
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.NewWithDetails(apierrors.ErrCodeValidationFailed, "Validation failed", validationErrors))
+		return
+	}
+
+	existing, _ := h.store.GetCategoryByName(r.Context(), req.Name)
 	if existing != nil {
-		utils.RespondWithError(w, http.StatusConflict, "Category with this name already exists")
+		apierrors.RespondWithError(w, http.StatusConflict, apierrors.New(apierrors.ErrCodeConflict, "Category with this name already exists"))
 		return
 	}
 
-	category, err := database.Queries.CreateCategory(r.Context(), req.Name, req.Description)
+	category, err := h.store.CreateCategory(r.Context(), req.Name, req.Description)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to create category")
+		logger.Log.Error().Err(err).Msg("Failed to create category")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to create category"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusCreated, models.ToCategoryResponse(category))
+	logger.Log.Info().Str("category_id", category.ID).Str("name", category.Name).Msg("Category created")
+	apierrors.RespondWithJSON(w, http.StatusCreated, models.ToCategoryResponse(category))
 }
 
 // GetCategories godoc
@@ -55,11 +68,12 @@ func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Tags categories
 // @Produce json
 // @Success 200 {array} models.CategoryResponse
-// @Router /api/categories [get]
+// @Router /api/v1/categories [get]
 func (h *CategoryHandler) GetAll(w http.ResponseWriter, r *http.Request) {
-	categories, err := database.Queries.ListCategories(r.Context())
+	categories, err := h.store.ListCategories(r.Context())
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to fetch categories")
+		logger.Log.Error().Err(err).Msg("Failed to fetch categories")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to fetch categories"))
 		return
 	}
 
@@ -68,7 +82,7 @@ func (h *CategoryHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		responses[i] = models.ToCategoryResponse(&categories[i])
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, responses)
+	apierrors.RespondWithJSON(w, http.StatusOK, responses)
 }
 
 // GetCategory godoc
@@ -79,21 +93,21 @@ func (h *CategoryHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 // @Param id path string true "Category ID"
 // @Success 200 {object} models.CategoryResponse
 // @Failure 404 {object} map[string]string
-// @Router /api/categories/{id} [get]
+// @Router /api/v1/categories/{id} [get]
 func (h *CategoryHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Category ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Category ID is required"))
 		return
 	}
 
-	category, err := database.Queries.GetCategoryByID(r.Context(), id)
+	category, err := h.store.GetCategoryByID(r.Context(), id)
 	if err != nil || category == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Category not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Category not found"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, models.ToCategoryResponse(category))
+	apierrors.RespondWithJSON(w, http.StatusOK, models.ToCategoryResponse(category))
 }
 
 // UpdateCategory godoc
@@ -108,36 +122,38 @@ func (h *CategoryHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} models.CategoryResponse
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
-// @Router /api/categories/{id} [put]
+// @Router /api/v1/categories/{id} [put]
 func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Category ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Category ID is required"))
 		return
 	}
 
 	var req models.UpdateCategoryRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
 	if req.Name == nil && req.Description == nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "No valid fields to update")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "No valid fields to update"))
 		return
 	}
 
-	category, err := database.Queries.UpdateCategory(r.Context(), id, req.Name, req.Description)
+	category, err := h.store.UpdateCategory(r.Context(), id, req.Name, req.Description)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to update category")
+		logger.Log.Error().Err(err).Str("category_id", id).Msg("Failed to update category")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to update category"))
 		return
 	}
 	if category == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Category not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Category not found"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, models.ToCategoryResponse(category))
+	logger.Log.Info().Str("category_id", id).Msg("Category updated")
+	apierrors.RespondWithJSON(w, http.StatusOK, models.ToCategoryResponse(category))
 }
 
 // DeleteCategory godoc
@@ -148,19 +164,20 @@ func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Param id path string true "Category ID"
 // @Success 200 {object} map[string]string
 // @Failure 404 {object} map[string]string
-// @Router /api/categories/{id} [delete]
+// @Router /api/v1/categories/{id} [delete]
 func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Category ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Category ID is required"))
 		return
 	}
 
-	err := database.Queries.DeleteCategory(r.Context(), id)
+	err := h.store.DeleteCategory(r.Context(), id)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Category not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Category not found"))
 		return
 	}
 
-	utils.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Category deleted successfully"})
+	logger.Log.Info().Str("category_id", id).Msg("Category deleted")
+	apierrors.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Category deleted successfully"})
 }

@@ -1,0 +1,1030 @@
+basePath: /
+definitions:
+  go-ecommerce_internal_database_sqlc.OrderStatus:
+    enum:
+    - PENDING
+    - PROCESSING
+    - SHIPPED
+    - DELIVERED
+    - CANCELLED
+    type: string
+    x-enum-varnames:
+    - OrderStatusPending
+    - OrderStatusProcessing
+    - OrderStatusShipped
+    - OrderStatusDelivered
+    - OrderStatusCancelled
+  go-ecommerce_internal_models.BrandResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  go-ecommerce_internal_models.CategoryResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  go-ecommerce_internal_models.CreateBrandRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  go-ecommerce_internal_models.CreateCategoryRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  go-ecommerce_internal_models.CreateOrderItemRequest:
+    properties:
+      product_id:
+        type: string
+      quantity:
+        type: integer
+    required:
+    - product_id
+    - quantity
+    type: object
+  go-ecommerce_internal_models.CreateOrderRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/go-ecommerce_internal_models.CreateOrderItemRequest'
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  go-ecommerce_internal_models.CreateProductRequest:
+    properties:
+      brand_id:
+        type: string
+      category_id:
+        type: string
+      description:
+        type: string
+      image_url:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      stock:
+        minimum: 0
+        type: integer
+    required:
+    - brand_id
+    - category_id
+    - name
+    - price
+    type: object
+  go-ecommerce_internal_models.CreateUserRequest:
+    properties:
+      address:
+        type: string
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        minLength: 6
+        type: string
+      phone:
+        type: string
+    required:
+    - email
+    - name
+    - password
+    type: object
+  go-ecommerce_internal_models.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  go-ecommerce_internal_models.LoginResponse:
+    properties:
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/go-ecommerce_internal_models.UserResponse'
+    type: object
+  go-ecommerce_internal_models.OrderItemResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      order_id:
+        type: string
+      price:
+        type: number
+      product:
+        $ref: '#/definitions/go-ecommerce_internal_models.ProductResponse'
+      product_id:
+        type: string
+      quantity:
+        type: integer
+    type: object
+  go-ecommerce_internal_models.OrderResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/go-ecommerce_internal_models.OrderItemResponse'
+        type: array
+      status:
+        $ref: '#/definitions/go-ecommerce_internal_database_sqlc.OrderStatus'
+      total_amount:
+        type: number
+      updated_at:
+        type: string
+      user:
+        $ref: '#/definitions/go-ecommerce_internal_models.UserResponse'
+      user_id:
+        type: string
+    type: object
+  go-ecommerce_internal_models.ProductResponse:
+    properties:
+      brand:
+        $ref: '#/definitions/go-ecommerce_internal_models.BrandResponse'
+      brand_id:
+        type: string
+      category:
+        $ref: '#/definitions/go-ecommerce_internal_models.CategoryResponse'
+      category_id:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      image_url:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      stock:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  go-ecommerce_internal_models.UpdateBrandRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  go-ecommerce_internal_models.UpdateCategoryRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  go-ecommerce_internal_models.UpdateOrderStatusRequest:
+    properties:
+      status:
+        $ref: '#/definitions/go-ecommerce_internal_database_sqlc.OrderStatus'
+    required:
+    - status
+    type: object
+  go-ecommerce_internal_models.UpdateProductRequest:
+    properties:
+      brand_id:
+        type: string
+      category_id:
+        type: string
+      description:
+        type: string
+      image_url:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      stock:
+        type: integer
+    type: object
+  go-ecommerce_internal_models.UserResponse:
+    properties:
+      address:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+      updated_at:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@example.com
+    name: API Support
+  description: A mini e-commerce API built with Go, PostgreSQL, and sqlc
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Go E-Commerce API
+  version: "1.0"
+paths:
+  /api/v1/admin/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate admin and return JWT token
+      parameters:
+      - description: Login credentials
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.LoginResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Admin login
+      tags:
+      - admin
+  /api/v1/admin/register:
+    post:
+      consumes:
+      - application/json
+      description: Create a new admin account (only for initial setup)
+      parameters:
+      - description: Admin registration data
+        in: body
+        name: admin
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Register a new admin
+      tags:
+      - admin
+  /api/v1/brands:
+    get:
+      description: Retrieve all product brands
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/go-ecommerce_internal_models.BrandResponse'
+            type: array
+      summary: Get all brands
+      tags:
+      - brands
+    post:
+      consumes:
+      - application/json
+      description: Create a new product brand (Admin only)
+      parameters:
+      - description: Brand data
+        in: body
+        name: brand
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.CreateBrandRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.BrandResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new brand
+      tags:
+      - brands
+  /api/v1/brands/{id}:
+    delete:
+      description: Delete a brand (Admin only)
+      parameters:
+      - description: Brand ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete brand
+      tags:
+      - brands
+    get:
+      description: Retrieve a specific brand by ID
+      parameters:
+      - description: Brand ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.BrandResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get brand by ID
+      tags:
+      - brands
+    put:
+      consumes:
+      - application/json
+      description: Update a brand (Admin only)
+      parameters:
+      - description: Brand ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Brand update data
+        in: body
+        name: brand
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.UpdateBrandRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.BrandResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update brand
+      tags:
+      - brands
+  /api/v1/categories:
+    get:
+      description: Retrieve all product categories
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/go-ecommerce_internal_models.CategoryResponse'
+            type: array
+      summary: Get all categories
+      tags:
+      - categories
+    post:
+      consumes:
+      - application/json
+      description: Create a new product category (Admin only)
+      parameters:
+      - description: Category data
+        in: body
+        name: category
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.CreateCategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new category
+      tags:
+      - categories
+  /api/v1/categories/{id}:
+    delete:
+      description: Delete a category (Admin only)
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete category
+      tags:
+      - categories
+    get:
+      description: Retrieve a specific category by ID
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.CategoryResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get category by ID
+      tags:
+      - categories
+    put:
+      consumes:
+      - application/json
+      description: Update a category (Admin only)
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Category update data
+        in: body
+        name: category
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.UpdateCategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update category
+      tags:
+      - categories
+  /api/v1/orders:
+    get:
+      description: Get all orders (User sees own orders, Admin sees all)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/go-ecommerce_internal_models.OrderResponse'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Get all orders
+      tags:
+      - orders
+    post:
+      consumes:
+      - application/json
+      description: Create a new order (User only)
+      parameters:
+      - description: Order data
+        in: body
+        name: order
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.CreateOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.OrderResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new order
+      tags:
+      - orders
+  /api/v1/orders/{id}:
+    get:
+      description: Get a specific order by ID
+      parameters:
+      - description: Order ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.OrderResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get order by ID
+      tags:
+      - orders
+  /api/v1/orders/{id}/status:
+    put:
+      consumes:
+      - application/json
+      description: Update order status (Admin only)
+      parameters:
+      - description: Order ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Order status
+        in: body
+        name: status
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.UpdateOrderStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.OrderResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update order status
+      tags:
+      - orders
+  /api/v1/products:
+    get:
+      description: Retrieve all products with optional filters
+      parameters:
+      - description: Filter by category ID
+        in: query
+        name: category
+        type: string
+      - description: Filter by brand ID
+        in: query
+        name: brand
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/go-ecommerce_internal_models.ProductResponse'
+            type: array
+      summary: Get all products
+      tags:
+      - products
+    post:
+      consumes:
+      - application/json
+      description: Create a new product (Admin only)
+      parameters:
+      - description: Product data
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.CreateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new product
+      tags:
+      - products
+  /api/v1/products/{id}:
+    delete:
+      description: Delete a product (Admin only)
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete product
+      tags:
+      - products
+    get:
+      description: Retrieve a specific product by ID
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.ProductResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get product by ID
+      tags:
+      - products
+    put:
+      consumes:
+      - application/json
+      description: Update a product (Admin only)
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Product update data
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.UpdateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.ProductResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update product
+      tags:
+      - products
+  /api/v1/users/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate user and return JWT token
+      parameters:
+      - description: Login credentials
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.LoginResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: User login
+      tags:
+      - users
+  /api/v1/users/profile:
+    get:
+      description: Get current user's profile information
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get user profile
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update current user's profile information
+      parameters:
+      - description: User update data
+        in: body
+        name: user
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user profile
+      tags:
+      - users
+  /api/v1/users/register:
+    post:
+      consumes:
+      - application/json
+      description: Create a new user account
+      parameters:
+      - description: User registration data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/go-ecommerce_internal_models.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/go-ecommerce_internal_models.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Register a new user
+      tags:
+      - users
+  /health:
+    get:
+      description: Check if the API is running
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /ready:
+    get:
+      description: Check if the API and database are ready
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Readiness check
+      tags:
+      - health
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

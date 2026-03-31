@@ -3,6 +3,8 @@ package sqlc
 import (
 	"context"
 	"database/sql"
+
+	"github.com/lib/pq"
 )
 
 // Store provides all database operations. When sqlc is used, run `sqlc generate` and this file can be replaced by generated code.
@@ -274,9 +276,7 @@ func (s *Store) GetProductWithDetails(ctx context.Context, id string) (*ProductW
 		c.id as cat_id, c.name as cat_name, c.description as cat_description, c.created_at as cat_created_at, c.updated_at as cat_updated_at,
 		b.id as brand_id, b.name as brand_name, b.description as brand_description, b.created_at as brand_created_at, b.updated_at as brand_updated_at
 		FROM products p JOIN categories c ON p.category_id = c.id JOIN brands b ON p.brand_id = b.id WHERE p.id = $1`, id).Scan(
-		&p.ID, &p.Name, &p.Description, &p.Price, &p.Stock, &p.ImageUrl, &p.CategoryID, &p.BrandID, &p.CreatedAt, &p.UpdatedAt,
-		&p.CatID, &p.CatName, &p.CatDescription, &p.CatCreatedAt, &p.CatUpdatedAt,
-		&p.BrandIDAlt, &p.BrandName, &p.BrandDescription, &p.BrandCreatedAt, &p.BrandUpdatedAt,
+		productWithDetailsScanTargets(&p)...,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -301,14 +301,40 @@ func (s *Store) ListProducts(ctx context.Context, categoryID, brandID *string) (
 	var list []ProductWithDetails
 	for rows.Next() {
 		var p ProductWithDetails
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.Stock, &p.ImageUrl, &p.CategoryID, &p.BrandID, &p.CreatedAt, &p.UpdatedAt,
-			&p.CatID, &p.CatName, &p.CatDescription, &p.CatCreatedAt, &p.CatUpdatedAt,
-			&p.BrandIDAlt, &p.BrandName, &p.BrandDescription, &p.BrandCreatedAt, &p.BrandUpdatedAt); err != nil {
+		if err := rows.Scan(productWithDetailsScanTargets(&p)...); err != nil {
 			return nil, err
 		}
 		list = append(list, p)
 	}
 	return list, rows.Err()
+}
+
+func (s *Store) ListProductsWithDetailsByIDs(ctx context.Context, ids []string) ([]ProductWithDetails, error) {
+	if len(ids) == 0 {
+		return []ProductWithDetails{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id, p.name, p.description, p.price, p.stock, p.image_url, p.category_id, p.brand_id, p.created_at, p.updated_at,
+		c.id as cat_id, c.name as cat_name, c.description as cat_description, c.created_at as cat_created_at, c.updated_at as cat_updated_at,
+		b.id as brand_id, b.name as brand_name, b.description as brand_description, b.created_at as brand_created_at, b.updated_at as brand_updated_at
+		FROM products p
+		JOIN categories c ON p.category_id = c.id
+		JOIN brands b ON p.brand_id = b.id
+		WHERE p.id = ANY($1::uuid[])`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	products := make([]ProductWithDetails, 0, len(ids))
+	for rows.Next() {
+		var p ProductWithDetails
+		if err := rows.Scan(productWithDetailsScanTargets(&p)...); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
 }
 
 func (s *Store) CreateProduct(ctx context.Context, name string, description *string, price float64, stock int32, imageURL *string, categoryID, brandID string) (*Product, error) {
@@ -412,6 +438,28 @@ func (s *Store) ListOrdersAll(ctx context.Context) ([]Order, error) {
 	return list, rows.Err()
 }
 
+func (s *Store) ListUsersByIDs(ctx context.Context, ids []string) ([]User, error) {
+	if len(ids) == 0 {
+		return []User{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, email, password, name, phone, address, created_at, updated_at FROM users WHERE id = ANY($1::uuid[])`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]User, 0, len(ids))
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Password, &u.Name, &u.Phone, &u.Address, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 func (s *Store) UpdateOrderStatus(ctx context.Context, id string, status OrderStatus) (*Order, error) {
 	var o Order
 	err := s.db.QueryRowContext(ctx, `UPDATE orders SET status = $2, updated_at = now() WHERE id = $1 RETURNING id, user_id, total_amount, status, created_at, updated_at`, id, status).Scan(
@@ -453,3 +501,90 @@ func (s *Store) ListOrderItemsByOrderID(ctx context.Context, orderID string) ([]
 	}
 	return list, rows.Err()
 }
+
+func (s *Store) ListOrderItemsByOrderIDs(ctx context.Context, orderIDs []string) ([]OrderItem, error) {
+	if len(orderIDs) == 0 {
+		return []OrderItem{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, order_id, product_id, quantity, price, created_at
+		FROM order_items
+		WHERE order_id = ANY($1::uuid[])
+		ORDER BY created_at ASC`, pq.Array(orderIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]OrderItem, 0)
+	for rows.Next() {
+		var oi OrderItem
+		if err := rows.Scan(&oi.ID, &oi.OrderID, &oi.ProductID, &oi.Quantity, &oi.Price, &oi.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, oi)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) CreateOrderWithItems(ctx context.Context, userID string, status OrderStatus, productMap map[string]*Product, reqItems []OrderItem) (*Order, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	totalAmount := 0.0
+	for _, item := range reqItems {
+		product := productMap[item.ProductID]
+		totalAmount += product.Price * float64(item.Quantity)
+
+		result, execErr := tx.ExecContext(ctx, `UPDATE products SET stock = stock - $2, updated_at = now() WHERE id = $1 AND stock >= $2`,
+			item.ProductID, item.Quantity)
+		if execErr != nil {
+			err = execErr
+			return nil, err
+		}
+		affected, affectedErr := result.RowsAffected()
+		if affectedErr != nil {
+			err = affectedErr
+			return nil, err
+		}
+		if affected == 0 {
+			return nil, sql.ErrNoRows
+		}
+	}
+
+	var order Order
+	err = tx.QueryRowContext(ctx, `INSERT INTO orders (user_id, total_amount, status) VALUES ($1, $2, $3) RETURNING id, user_id, total_amount, status, created_at, updated_at`,
+		userID, totalAmount, status).Scan(&order.ID, &order.UserID, &order.TotalAmount, &order.Status, &order.CreatedAt, &order.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range reqItems {
+		product := productMap[item.ProductID]
+		if _, err = tx.ExecContext(ctx, `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)`,
+			order.ID, item.ProductID, item.Quantity, product.Price); err != nil {
+			return nil, err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func productWithDetailsScanTargets(p *ProductWithDetails) []any {
+	return []any{
+		&p.ID, &p.Name, &p.Description, &p.Price, &p.Stock, &p.ImageUrl, &p.CategoryID, &p.BrandID, &p.CreatedAt, &p.UpdatedAt,
+		&p.CatID, &p.CatName, &p.CatDescription, &p.CatCreatedAt, &p.CatUpdatedAt,
+		&p.BrandIDAlt, &p.BrandName, &p.BrandDescription, &p.BrandCreatedAt, &p.BrandUpdatedAt,
+	}
+}
+

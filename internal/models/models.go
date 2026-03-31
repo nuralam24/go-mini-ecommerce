@@ -18,16 +18,16 @@ type UserResponse struct {
 }
 
 type CreateUserRequest struct {
-	Email    string  `json:"email" binding:"required,email"`
-	Password string  `json:"password" binding:"required,min=6"`
-	Name     string  `json:"name" binding:"required"`
+	Email    string  `json:"email" validate:"required,email"`
+	Password string  `json:"password" validate:"required,min=6"`
+	Name     string  `json:"name" validate:"required"`
 	Phone    *string `json:"phone,omitempty"`
 	Address  *string `json:"address,omitempty"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
 }
 
 type LoginResponse struct {
@@ -45,7 +45,7 @@ type CategoryResponse struct {
 }
 
 type CreateCategoryRequest struct {
-	Name        string  `json:"name" binding:"required"`
+	Name        string  `json:"name" validate:"required"`
 	Description *string `json:"description,omitempty"`
 }
 
@@ -64,7 +64,7 @@ type BrandResponse struct {
 }
 
 type CreateBrandRequest struct {
-	Name        string  `json:"name" binding:"required"`
+	Name        string  `json:"name" validate:"required"`
 	Description *string `json:"description,omitempty"`
 }
 
@@ -90,13 +90,13 @@ type ProductResponse struct {
 }
 
 type CreateProductRequest struct {
-	Name        string  `json:"name" binding:"required"`
+	Name        string  `json:"name" validate:"required"`
 	Description *string `json:"description,omitempty"`
-	Price       float64 `json:"price" binding:"required,gt=0"`
-	Stock       int     `json:"stock" binding:"gte=0"`
+	Price       float64 `json:"price" validate:"required,gt=0"`
+	Stock       int     `json:"stock" validate:"gte=0"`
 	ImageURL    *string `json:"image_url,omitempty"`
-	CategoryID  string  `json:"category_id" binding:"required"`
-	BrandID     string  `json:"brand_id" binding:"required"`
+	CategoryID  string  `json:"category_id" validate:"required"`
+	BrandID     string  `json:"brand_id" validate:"required"`
 }
 
 type UpdateProductRequest struct {
@@ -132,16 +132,16 @@ type OrderItemResponse struct {
 }
 
 type CreateOrderRequest struct {
-	Items []CreateOrderItemRequest `json:"items" binding:"required,min=1"`
+	Items []CreateOrderItemRequest `json:"items" validate:"required,min=1,dive"`
 }
 
 type CreateOrderItemRequest struct {
-	ProductID string `json:"product_id" binding:"required"`
-	Quantity  int    `json:"quantity" binding:"required,gt=0"`
+	ProductID string `json:"product_id" validate:"required"`
+	Quantity  int    `json:"quantity" validate:"required,gt=0"`
 }
 
 type UpdateOrderStatusRequest struct {
-	Status sqlc.OrderStatus `json:"status" binding:"required"`
+	Status sqlc.OrderStatus `json:"status" validate:"required"`
 }
 
 // Helpers: sqlc types -> API response

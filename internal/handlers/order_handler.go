@@ -3,17 +3,21 @@ package handlers
 import (
 	"net/http"
 
-	"go-ecommerce/internal/database"
 	"go-ecommerce/internal/database/sqlc"
+	apierrors "go-ecommerce/internal/errors"
+	"go-ecommerce/internal/logger"
 	"go-ecommerce/internal/middleware"
 	"go-ecommerce/internal/models"
 	"go-ecommerce/internal/utils"
+	"go-ecommerce/internal/validator"
 )
 
-type OrderHandler struct{}
+type OrderHandler struct {
+	store *sqlc.Store
+}
 
-func NewOrderHandler() *OrderHandler {
-	return &OrderHandler{}
+func NewOrderHandler(store *sqlc.Store) *OrderHandler {
+	return &OrderHandler{store: store}
 }
 
 // CreateOrder godoc
@@ -26,69 +30,97 @@ func NewOrderHandler() *OrderHandler {
 // @Param order body models.CreateOrderRequest true "Order data"
 // @Success 201 {object} models.OrderResponse
 // @Failure 400 {object} map[string]string
-// @Router /api/orders [post]
+// @Router /api/v1/orders [post]
 func (h *OrderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	if userID == "" {
-		utils.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Unauthorized"))
 		return
 	}
 
 	var req models.CreateOrderRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
-	var totalAmount float64
-	for _, item := range req.Items {
-		product, err := database.Queries.GetProductByID(r.Context(), item.ProductID)
-		if err != nil || product == nil {
-			utils.RespondWithError(w, http.StatusBadRequest, "Product not found: "+item.ProductID)
-			return
-		}
-		if product.Stock < int32(item.Quantity) {
-			utils.RespondWithError(w, http.StatusBadRequest, "Insufficient stock for product: "+product.Name)
-			return
-		}
-		totalAmount += product.Price * float64(item.Quantity)
-		_, err = database.Queries.UpdateProductStock(r.Context(), item.ProductID, product.Stock-int32(item.Quantity))
-		if err != nil {
-			utils.RespondWithError(w, http.StatusInternalServerError, "Failed to update product stock")
-			return
-		}
+	if err := validator.Validate(req); err != nil {
+		validationErrors := validator.FormatValidationErrors(err)
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.NewWithDetails(apierrors.ErrCodeValidationFailed, "Validation failed", validationErrors))
+		return
 	}
 
-	order, err := database.Queries.CreateOrder(r.Context(), userID, totalAmount, sqlc.OrderStatusPending)
+	productIDs := make([]string, 0, len(req.Items))
+	productQty := make(map[string]int32, len(req.Items))
+	for _, item := range req.Items {
+		productIDs = append(productIDs, item.ProductID)
+		productQty[item.ProductID] += int32(item.Quantity)
+	}
+
+	products, err := h.store.ListProductsWithDetailsByIDs(r.Context(), uniqueStrings(productIDs))
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to create order")
+		logger.Log.Error().Err(err).Msg("Failed to batch fetch products for order")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to validate order items"))
 		return
 	}
 
-	for _, item := range req.Items {
-		product, _ := database.Queries.GetProductByID(r.Context(), item.ProductID)
-		if product == nil {
-			continue
+	productMap := make(map[string]*sqlc.Product, len(products))
+	productDetailsMap := make(map[string]*sqlc.ProductWithDetails, len(products))
+	for i := range products {
+		p := products[i]
+		productMap[p.ID] = &sqlc.Product{
+			ID:         p.ID,
+			Name:       p.Name,
+			Description: p.Description,
+			Price:      p.Price,
+			Stock:      p.Stock,
+			ImageUrl:   p.ImageUrl,
+			CategoryID: p.CategoryID,
+			BrandID:    p.BrandID,
+			CreatedAt:  p.CreatedAt,
+			UpdatedAt:  p.UpdatedAt,
 		}
-		_, err = database.Queries.CreateOrderItem(r.Context(), order.ID, item.ProductID, int32(item.Quantity), product.Price)
-		if err != nil {
-			utils.RespondWithError(w, http.StatusInternalServerError, "Failed to create order item")
+		productDetailsMap[p.ID] = &products[i]
+	}
+
+	for productID, qty := range productQty {
+		product := productMap[productID]
+		if product == nil {
+			apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeNotFound, "Product not found: "+productID))
+			return
+		}
+		if product.Stock < qty {
+			apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInsufficientStock, "Insufficient stock for product: "+product.Name))
 			return
 		}
 	}
 
-	// Build response: order + user + items with product details
-	user, _ := database.Queries.GetUserByID(r.Context(), userID)
-	items, _ := database.Queries.ListOrderItemsByOrderID(r.Context(), order.ID)
+	orderItems := make([]sqlc.OrderItem, 0, len(req.Items))
+	for _, item := range req.Items {
+		orderItems = append(orderItems, sqlc.OrderItem{
+			ProductID: item.ProductID,
+			Quantity:  int32(item.Quantity),
+		})
+	}
+
+	order, err := h.store.CreateOrderWithItems(r.Context(), userID, sqlc.OrderStatusPending, productMap, orderItems)
+	if err != nil {
+		logger.Log.Error().Err(err).Str("user_id", userID).Msg("Failed to create order")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to create order"))
+		return
+	}
+
+	user, _ := h.store.GetUserByID(r.Context(), userID)
+	items, _ := h.store.ListOrderItemsByOrderID(r.Context(), order.ID)
 	itemProducts := make(map[string]*sqlc.ProductWithDetails)
 	for _, item := range items {
-		prod, _ := database.Queries.GetProductWithDetails(r.Context(), item.ProductID)
-		if prod != nil {
+		if prod, ok := productDetailsMap[item.ProductID]; ok {
 			itemProducts[item.ProductID] = prod
 		}
 	}
+	logger.Log.Info().Str("order_id", order.ID).Str("user_id", userID).Float64("total", order.TotalAmount).Msg("Order created")
 	resp := models.ToOrderResponse(order, user, items, itemProducts)
-	utils.RespondWithJSON(w, http.StatusCreated, resp)
+	apierrors.RespondWithJSON(w, http.StatusCreated, resp)
 }
 
 // GetOrders godoc
@@ -98,7 +130,7 @@ func (h *OrderHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Security BearerAuth
 // @Produce json
 // @Success 200 {array} models.OrderResponse
-// @Router /api/orders [get]
+// @Router /api/v1/orders [get]
 func (h *OrderHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	role := middleware.GetUserRole(r)
@@ -106,29 +138,27 @@ func (h *OrderHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	var orders []sqlc.Order
 	var err error
 	if role == "admin" {
-		orders, err = database.Queries.ListOrdersAll(r.Context())
+		orders, err = h.store.ListOrdersAll(r.Context())
 	} else {
-		orders, err = database.Queries.ListOrdersByUserID(r.Context(), userID)
+		orders, err = h.store.ListOrdersByUserID(r.Context(), userID)
 	}
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to fetch orders")
+		logger.Log.Error().Err(err).Msg("Failed to fetch orders")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to fetch orders"))
 		return
 	}
 
 	responses := make([]models.OrderResponse, 0, len(orders))
+	userMap, orderItemsMap, productMap := h.prefetchOrderRelations(r, orders)
 	for i := range orders {
-		user, _ := database.Queries.GetUserByID(r.Context(), orders[i].UserID)
-		items, _ := database.Queries.ListOrderItemsByOrderID(r.Context(), orders[i].ID)
-		itemProducts := make(map[string]*sqlc.ProductWithDetails)
-		for _, item := range items {
-			prod, _ := database.Queries.GetProductWithDetails(r.Context(), item.ProductID)
-			if prod != nil {
-				itemProducts[item.ProductID] = prod
-			}
-		}
-		responses = append(responses, models.ToOrderResponse(&orders[i], user, items, itemProducts))
+		responses = append(responses, models.ToOrderResponse(
+			&orders[i],
+			userMap[orders[i].UserID],
+			orderItemsMap[orders[i].ID],
+			productMap,
+		))
 	}
-	utils.RespondWithJSON(w, http.StatusOK, responses)
+	apierrors.RespondWithJSON(w, http.StatusOK, responses)
 }
 
 // GetOrder godoc
@@ -140,38 +170,32 @@ func (h *OrderHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 // @Param id path string true "Order ID"
 // @Success 200 {object} models.OrderResponse
 // @Failure 404 {object} map[string]string
-// @Router /api/orders/{id} [get]
+// @Router /api/v1/orders/{id} [get]
 func (h *OrderHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Order ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Order ID is required"))
 		return
 	}
 
 	userID := middleware.GetUserID(r)
 	role := middleware.GetUserRole(r)
 
-	order, err := database.Queries.GetOrderByID(r.Context(), id)
+	order, err := h.store.GetOrderByID(r.Context(), id)
 	if err != nil || order == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Order not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Order not found"))
 		return
 	}
 	if role != "admin" && order.UserID != userID {
-		utils.RespondWithError(w, http.StatusForbidden, "Access denied")
+		apierrors.RespondWithError(w, http.StatusForbidden, apierrors.New(apierrors.ErrCodeForbidden, "Access denied"))
 		return
 	}
 
-	user, _ := database.Queries.GetUserByID(r.Context(), order.UserID)
-	items, _ := database.Queries.ListOrderItemsByOrderID(r.Context(), order.ID)
-	itemProducts := make(map[string]*sqlc.ProductWithDetails)
-	for _, item := range items {
-		prod, _ := database.Queries.GetProductWithDetails(r.Context(), item.ProductID)
-		if prod != nil {
-			itemProducts[item.ProductID] = prod
-		}
-	}
+	user, _ := h.store.GetUserByID(r.Context(), order.UserID)
+	items, _ := h.store.ListOrderItemsByOrderID(r.Context(), order.ID)
+	itemProducts := h.loadProductsByOrderItems(r, items)
 	resp := models.ToOrderResponse(order, user, items, itemProducts)
-	utils.RespondWithJSON(w, http.StatusOK, resp)
+	apierrors.RespondWithJSON(w, http.StatusOK, resp)
 }
 
 // UpdateOrderStatus godoc
@@ -185,35 +209,96 @@ func (h *OrderHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 // @Param status body models.UpdateOrderStatusRequest true "Order status"
 // @Success 200 {object} models.OrderResponse
 // @Failure 404 {object} map[string]string
-// @Router /api/orders/{id}/status [put]
+// @Router /api/v1/orders/{id}/status [put]
 func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Order ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Order ID is required"))
 		return
 	}
 
 	var req models.UpdateOrderStatusRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
-	order, err := database.Queries.UpdateOrderStatus(r.Context(), id, req.Status)
+	if err := validator.Validate(req); err != nil {
+		validationErrors := validator.FormatValidationErrors(err)
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.NewWithDetails(apierrors.ErrCodeValidationFailed, "Validation failed", validationErrors))
+		return
+	}
+
+	order, err := h.store.UpdateOrderStatus(r.Context(), id, req.Status)
 	if err != nil || order == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Order not found")
+		logger.Log.Error().Err(err).Str("order_id", id).Msg("Failed to update order status")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Order not found"))
 		return
 	}
 
-	user, _ := database.Queries.GetUserByID(r.Context(), order.UserID)
-	items, _ := database.Queries.ListOrderItemsByOrderID(r.Context(), order.ID)
-	itemProducts := make(map[string]*sqlc.ProductWithDetails)
-	for _, item := range items {
-		prod, _ := database.Queries.GetProductWithDetails(r.Context(), item.ProductID)
-		if prod != nil {
-			itemProducts[item.ProductID] = prod
-		}
-	}
+	user, _ := h.store.GetUserByID(r.Context(), order.UserID)
+	items, _ := h.store.ListOrderItemsByOrderID(r.Context(), order.ID)
+	itemProducts := h.loadProductsByOrderItems(r, items)
+	logger.Log.Info().Str("order_id", id).Str("status", string(req.Status)).Msg("Order status updated")
 	resp := models.ToOrderResponse(order, user, items, itemProducts)
-	utils.RespondWithJSON(w, http.StatusOK, resp)
+	apierrors.RespondWithJSON(w, http.StatusOK, resp)
+}
+
+func (h *OrderHandler) prefetchOrderRelations(r *http.Request, orders []sqlc.Order) (map[string]*sqlc.User, map[string][]sqlc.OrderItem, map[string]*sqlc.ProductWithDetails) {
+	userIDs := make([]string, 0, len(orders))
+	orderIDs := make([]string, 0, len(orders))
+	for i := range orders {
+		userIDs = append(userIDs, orders[i].UserID)
+		orderIDs = append(orderIDs, orders[i].ID)
+	}
+
+	users, _ := h.store.ListUsersByIDs(r.Context(), uniqueStrings(userIDs))
+	userMap := make(map[string]*sqlc.User, len(users))
+	for i := range users {
+		userMap[users[i].ID] = &users[i]
+	}
+
+	items, _ := h.store.ListOrderItemsByOrderIDs(r.Context(), uniqueStrings(orderIDs))
+	orderItemsMap := make(map[string][]sqlc.OrderItem)
+	for _, item := range items {
+		orderItemsMap[item.OrderID] = append(orderItemsMap[item.OrderID], item)
+	}
+
+	productIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		productIDs = append(productIDs, item.ProductID)
+	}
+	products, _ := h.store.ListProductsWithDetailsByIDs(r.Context(), uniqueStrings(productIDs))
+	productMap := make(map[string]*sqlc.ProductWithDetails, len(products))
+	for i := range products {
+		productMap[products[i].ID] = &products[i]
+	}
+
+	return userMap, orderItemsMap, productMap
+}
+
+func (h *OrderHandler) loadProductsByOrderItems(r *http.Request, items []sqlc.OrderItem) map[string]*sqlc.ProductWithDetails {
+	productIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		productIDs = append(productIDs, item.ProductID)
+	}
+	products, _ := h.store.ListProductsWithDetailsByIDs(r.Context(), uniqueStrings(productIDs))
+	productMap := make(map[string]*sqlc.ProductWithDetails, len(products))
+	for i := range products {
+		productMap[products[i].ID] = &products[i]
+	}
+	return productMap
+}
+
+func uniqueStrings(input []string) []string {
+	seen := make(map[string]struct{}, len(input))
+	out := make([]string, 0, len(input))
+	for _, s := range input {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }

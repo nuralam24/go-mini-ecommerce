@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	apierrors "go-ecommerce/internal/errors"
 	"go-ecommerce/internal/utils"
 )
 
@@ -18,24 +19,23 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			utils.RespondWithError(w, http.StatusUnauthorized, "Authorization header required")
+			apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Authorization header required"))
 			return
 		}
 
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			utils.RespondWithError(w, http.StatusUnauthorized, "Invalid authorization header format")
+			apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Invalid authorization header format"))
 			return
 		}
 
 		token := parts[1]
 		claims, err := utils.ValidateToken(token)
 		if err != nil {
-			utils.RespondWithError(w, http.StatusUnauthorized, "Invalid or expired token")
+			apierrors.RespondWithError(w, http.StatusUnauthorized, apierrors.New(apierrors.ErrCodeUnauthorized, "Invalid or expired token"))
 			return
 		}
 
-		// Add user info to context
 		ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 		ctx = context.WithValue(ctx, UserEmailKey, claims.Email)
 		ctx = context.WithValue(ctx, UserRoleKey, claims.Role)
@@ -48,7 +48,7 @@ func AdminMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, ok := r.Context().Value(UserRoleKey).(string)
 		if !ok || role != "admin" {
-			utils.RespondWithError(w, http.StatusForbidden, "Admin access required")
+			apierrors.RespondWithError(w, http.StatusForbidden, apierrors.New(apierrors.ErrCodeForbidden, "Admin access required"))
 			return
 		}
 

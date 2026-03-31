@@ -2,10 +2,11 @@ package database
 
 import (
 	"database/sql"
-	"log"
 	"os"
 
+	"go-ecommerce/internal/config"
 	"go-ecommerce/internal/database/sqlc"
+	"go-ecommerce/internal/logger"
 
 	_ "github.com/lib/pq"
 )
@@ -13,20 +14,31 @@ import (
 var DB *sql.DB
 var Queries *sqlc.Store
 
-func Connect() error {
-	// DATABASE_URL is loaded from env (e.g. postgres://user:pass@localhost:5432/dbname?sslmode=disable)
+func Connect(cfg *config.Config) (*sqlc.Store, error) {
 	connStr := getConnectionString()
 	var err error
 	DB, err = sql.Open("postgres", connStr)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	if cfg != nil {
+		DB.SetMaxOpenConns(cfg.DBMaxOpenConns)
+		DB.SetMaxIdleConns(cfg.DBMaxIdleConns)
+		DB.SetConnMaxLifetime(cfg.DBConnMaxLifetime)
+		DB.SetConnMaxIdleTime(cfg.DBConnMaxIdleTime)
+	}
+
 	if err := DB.Ping(); err != nil {
-		return err
+		return nil, err
 	}
 	Queries = sqlc.NewStore(DB)
-	log.Println("Database connected successfully")
-	return nil
+	stats := DB.Stats()
+	logger.Log.Info().
+		Int("db_max_open_conns", stats.MaxOpenConnections).
+		Int("db_idle_conns", stats.Idle).
+		Msg("Database connected successfully")
+	return Queries, nil
 }
 
 func Disconnect() error {
@@ -37,11 +49,9 @@ func Disconnect() error {
 }
 
 func getConnectionString() string {
-	// Prefer DATABASE_URL
 	if s := os.Getenv("DATABASE_URL"); s != "" {
 		return s
 	}
-	// Fallback: build from individual vars
 	user := os.Getenv("PGUSER")
 	if user == "" {
 		user = "postgres"

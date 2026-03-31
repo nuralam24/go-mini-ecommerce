@@ -3,15 +3,20 @@ package handlers
 import (
 	"net/http"
 
-	"go-ecommerce/internal/database"
+	"go-ecommerce/internal/database/sqlc"
+	apierrors "go-ecommerce/internal/errors"
+	"go-ecommerce/internal/logger"
 	"go-ecommerce/internal/models"
 	"go-ecommerce/internal/utils"
+	"go-ecommerce/internal/validator"
 )
 
-type ProductHandler struct{}
+type ProductHandler struct {
+	store *sqlc.Store
+}
 
-func NewProductHandler() *ProductHandler {
-	return &ProductHandler{}
+func NewProductHandler(store *sqlc.Store) *ProductHandler {
+	return &ProductHandler{store: store}
 }
 
 // CreateProduct godoc
@@ -24,38 +29,46 @@ func NewProductHandler() *ProductHandler {
 // @Param product body models.CreateProductRequest true "Product data"
 // @Success 201 {object} models.ProductResponse
 // @Failure 400 {object} map[string]string
-// @Router /api/products [post]
+// @Router /api/v1/products [post]
 func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateProductRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
-	cat, _ := database.Queries.GetCategoryByID(r.Context(), req.CategoryID)
+	if err := validator.Validate(req); err != nil {
+		validationErrors := validator.FormatValidationErrors(err)
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.NewWithDetails(apierrors.ErrCodeValidationFailed, "Validation failed", validationErrors))
+		return
+	}
+
+	cat, _ := h.store.GetCategoryByID(r.Context(), req.CategoryID)
 	if cat == nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid category ID")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid category ID"))
 		return
 	}
 
-	brand, _ := database.Queries.GetBrandByID(r.Context(), req.BrandID)
+	brand, _ := h.store.GetBrandByID(r.Context(), req.BrandID)
 	if brand == nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid brand ID")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid brand ID"))
 		return
 	}
 
-	product, err := database.Queries.CreateProduct(r.Context(), req.Name, req.Description, req.Price, int32(req.Stock), req.ImageURL, req.CategoryID, req.BrandID)
+	product, err := h.store.CreateProduct(r.Context(), req.Name, req.Description, req.Price, int32(req.Stock), req.ImageURL, req.CategoryID, req.BrandID)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to create product")
+		logger.Log.Error().Err(err).Msg("Failed to create product")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to create product"))
 		return
 	}
 
-	withDetails, _ := database.Queries.GetProductWithDetails(r.Context(), product.ID)
+	withDetails, _ := h.store.GetProductWithDetails(r.Context(), product.ID)
 	if withDetails != nil {
-		utils.RespondWithJSON(w, http.StatusCreated, models.ToProductResponseFromDetails(withDetails))
+		logger.Log.Info().Str("product_id", product.ID).Str("name", product.Name).Msg("Product created")
+		apierrors.RespondWithJSON(w, http.StatusCreated, models.ToProductResponseFromDetails(withDetails))
 		return
 	}
-	utils.RespondWithJSON(w, http.StatusCreated, models.ToProductResponseFromProduct(product))
+	apierrors.RespondWithJSON(w, http.StatusCreated, models.ToProductResponseFromProduct(product))
 }
 
 // GetProducts godoc
@@ -66,7 +79,7 @@ func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Param category query string false "Filter by category ID"
 // @Param brand query string false "Filter by brand ID"
 // @Success 200 {array} models.ProductResponse
-// @Router /api/products [get]
+// @Router /api/v1/products [get]
 func (h *ProductHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	categoryID := r.URL.Query().Get("category")
 	brandID := r.URL.Query().Get("brand")
@@ -78,9 +91,10 @@ func (h *ProductHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		brandPtr = &brandID
 	}
 
-	products, err := database.Queries.ListProducts(r.Context(), catPtr, brandPtr)
+	products, err := h.store.ListProducts(r.Context(), catPtr, brandPtr)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to fetch products")
+		logger.Log.Error().Err(err).Msg("Failed to fetch products")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to fetch products"))
 		return
 	}
 
@@ -88,7 +102,7 @@ func (h *ProductHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	for i := range products {
 		responses[i] = models.ToProductResponseFromDetails(&products[i])
 	}
-	utils.RespondWithJSON(w, http.StatusOK, responses)
+	apierrors.RespondWithJSON(w, http.StatusOK, responses)
 }
 
 // GetProduct godoc
@@ -99,20 +113,20 @@ func (h *ProductHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 // @Param id path string true "Product ID"
 // @Success 200 {object} models.ProductResponse
 // @Failure 404 {object} map[string]string
-// @Router /api/products/{id} [get]
+// @Router /api/v1/products/{id} [get]
 func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Product ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Product ID is required"))
 		return
 	}
 
-	product, err := database.Queries.GetProductWithDetails(r.Context(), id)
+	product, err := h.store.GetProductWithDetails(r.Context(), id)
 	if err != nil || product == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Product not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Product not found"))
 		return
 	}
-	utils.RespondWithJSON(w, http.StatusOK, models.ToProductResponseFromDetails(product))
+	apierrors.RespondWithJSON(w, http.StatusOK, models.ToProductResponseFromDetails(product))
 }
 
 // UpdateProduct godoc
@@ -126,17 +140,17 @@ func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 // @Param product body models.UpdateProductRequest true "Product update data"
 // @Success 200 {object} models.ProductResponse
 // @Failure 404 {object} map[string]string
-// @Router /api/products/{id} [put]
+// @Router /api/v1/products/{id} [put]
 func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Product ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Product ID is required"))
 		return
 	}
 
 	var req models.UpdateProductRequest
 	if err := utils.DecodeJSON(r, &req); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Invalid request body"))
 		return
 	}
 
@@ -170,26 +184,28 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if name == nil && description == nil && price == nil && stock == nil && imageURL == nil && categoryID == nil && brandID == nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "No valid fields to update")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "No valid fields to update"))
 		return
 	}
 
-	product, err := database.Queries.UpdateProduct(r.Context(), id, name, description, price, stock, imageURL, categoryID, brandID)
+	product, err := h.store.UpdateProduct(r.Context(), id, name, description, price, stock, imageURL, categoryID, brandID)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "Failed to update product")
+		logger.Log.Error().Err(err).Str("product_id", id).Msg("Failed to update product")
+		apierrors.RespondWithError(w, http.StatusInternalServerError, apierrors.New(apierrors.ErrCodeDatabaseError, "Failed to update product"))
 		return
 	}
 	if product == nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Product not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Product not found"))
 		return
 	}
 
-	withDetails, _ := database.Queries.GetProductWithDetails(r.Context(), id)
+	withDetails, _ := h.store.GetProductWithDetails(r.Context(), id)
 	if withDetails != nil {
-		utils.RespondWithJSON(w, http.StatusOK, models.ToProductResponseFromDetails(withDetails))
+		logger.Log.Info().Str("product_id", id).Msg("Product updated")
+		apierrors.RespondWithJSON(w, http.StatusOK, models.ToProductResponseFromDetails(withDetails))
 		return
 	}
-	utils.RespondWithJSON(w, http.StatusOK, models.ToProductResponseFromProduct(product))
+	apierrors.RespondWithJSON(w, http.StatusOK, models.ToProductResponseFromProduct(product))
 }
 
 // DeleteProduct godoc
@@ -200,18 +216,19 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Param id path string true "Product ID"
 // @Success 200 {object} map[string]string
 // @Failure 404 {object} map[string]string
-// @Router /api/products/{id} [delete]
+// @Router /api/v1/products/{id} [delete]
 func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		utils.RespondWithError(w, http.StatusBadRequest, "Product ID is required")
+		apierrors.RespondWithError(w, http.StatusBadRequest, apierrors.New(apierrors.ErrCodeInvalidRequest, "Product ID is required"))
 		return
 	}
 
-	err := database.Queries.DeleteProduct(r.Context(), id)
+	err := h.store.DeleteProduct(r.Context(), id)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Product not found")
+		apierrors.RespondWithError(w, http.StatusNotFound, apierrors.New(apierrors.ErrCodeNotFound, "Product not found"))
 		return
 	}
-	utils.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Product deleted successfully"})
+	logger.Log.Info().Str("product_id", id).Msg("Product deleted")
+	apierrors.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Product deleted successfully"})
 }
